@@ -7,6 +7,9 @@ on:
   push:
     branches: [ main ]
 
+permissions:
+  contents: write
+
 jobs:
   run-bot:
     runs-on: ubuntu-latest
@@ -21,3 +24,13 @@ jobs:
         env:
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
         run: timeout 330m python3 main.py || true
+      - name: Save Lifetime Stats Permanently
+        if: always()
+        run: |
+          if [ -f ledger.json ]; then
+            git config user.name "Stats-Bot"
+            git config user.email "bot@github.com"
+            git add ledger.json
+            git commit -m "Auto-save Lifetime Stats [skip ci]" || true
+            git push || true
+          fi
