@@ -17,4 +17,7 @@ jobs:
         with:
           python-version: '3.11'
       - run: pip install discord.py aiohttp google-generativeai requests
-      - run: timeout 330m python3 main.py || true
+      - name: Run Bot Privately
+        env:
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+        run: timeout 330m python3 main.py || true
