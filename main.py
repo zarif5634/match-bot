@@ -24,10 +24,7 @@ from discord.ext import commands, tasks
 # =====================================================================
 # 1. CONFIGURATION
 # =====================================================================
-DISCORD_BOT_TOKEN = os.getenv(
-    "DISCORD_BOT_TOKEN",
-    "MTU2ODY3Mjg3ODkxNDcwNzczMA.GGdTbz.NhH-GU8OML_usfsQqJN0u4uES0LgYdee2ZDC34"
-)
+DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")  # Optional: works with built-in OCR even if empty
 PORT = int(os.getenv("PORT", 8080))
 
