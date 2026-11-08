@@ -1,4 +1,96 @@
 {
  "version": 2,
- "bets": []
+ "bets": [
+  {
+   "key": "id3153229119",
+   "id": "3153229119",
+   "title": "3-Leg Parlay",
+   "kind": "parlay",
+   "sport": "soccer",
+   "stake": 300.0,
+   "odds": 4.053,
+   "result": "lost",
+   "net": -300.0,
+   "date": "2026-11-08",
+   "legs": [
+    {
+     "label": "Crystal Palace Over 0.5",
+     "match": "Crystal Palace vs Liverpool",
+     "sport": "soccer",
+     "status": "won",
+     "score": "Crystal Palace 1–3 Liverpool"
+    },
+    {
+     "label": "Chelsea 0.0 (handicap)",
+     "match": "Sunderland vs Chelsea",
+     "sport": "soccer",
+     "status": "lost",
+     "score": "Sunderland 1–0 Chelsea"
+    },
+    {
+     "label": "Barcelona to win",
+     "match": "Atletico Madrid vs Barcelona",
+     "sport": "soccer",
+     "status": "won",
+     "score": "Atletico Madrid 1–2 Barcelona"
+    }
+   ]
+  },
+  {
+   "key": "id3152843586",
+   "id": "3152843586",
+   "title": "Johnny Walker vs Waldo Cortes-Acosta",
+   "kind": "single",
+   "sport": "mma",
+   "stake": 1200.0,
+   "odds": 1.507,
+   "result": "won",
+   "net": 608.4,
+   "date": "2026-11-07",
+   "legs": [
+    {
+     "label": "Fight Starts Round 4: No",
+     "match": "Johnny Walker vs Waldo Cortes-Acosta",
+     "sport": "mma",
+     "status": "won",
+     "score": "Johnny Walker vs Waldo Cortes Acosta"
+    }
+   ]
+  },
+  {
+   "key": "id3152844237",
+   "id": "3152844237",
+   "title": "3-Leg Parlay",
+   "kind": "parlay",
+   "sport": "mma",
+   "stake": 200.3,
+   "odds": 4.703,
+   "result": "lost",
+   "net": -200.3,
+   "date": "2026-11-07",
+   "legs": [
+    {
+     "label": "Under 1.5 rounds",
+     "match": "Johnny Walker vs Waldo Cortes-Acosta",
+     "sport": "mma",
+     "status": "lost",
+     "score": "Johnny Walker vs Waldo Cortes Acosta"
+    },
+    {
+     "label": "Elijah Smith to win",
+     "match": "Elijah Smith vs Davey Grant",
+     "sport": "mma",
+     "status": "won",
+     "score": "Elijah Smith vs Davey Grant"
+    },
+    {
+     "label": "Lucas Fernando to win",
+     "match": "Lucas Fernando vs Billy Elekana",
+     "sport": "mma",
+     "status": "won",
+     "score": "Lucas Fernando vs Billy Elekana"
+    }
+   ]
+  }
+ ]
 }
