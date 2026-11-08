@@ -1,0 +1,42 @@
+{
+  "starting_bankroll": 1000.0,
+  "profit_goal": 10000.0,
+  "total_slips": 2,
+  "slips_won": 0,
+  "slips_lost": 2,
+  "total_legs": 6,
+  "legs_won": 0,
+  "total_staked": 503.0,
+  "net_profit": -503.0,
+  "biggest_win": 0.0,
+  "best_odds_hit": 0.0,
+  "current_streak": 0,
+  "best_streak": 0,
+  "parlays_missed_by_one": 0,
+  "singles_won": 0,
+  "singles_total": 0,
+  "parlays_won": 0,
+  "parlays_total": 2,
+  "sport_stats": {
+    "football": {
+      "won": 0,
+      "total": 6
+    }
+  },
+  "history": [
+    {
+      "date": "2026-11-08",
+      "title": "3-Leg Multi-Sport Parlay",
+      "sport": "football",
+      "won": false,
+      "net": -203.0
+    },
+    {
+      "date": "2026-11-08",
+      "title": "3-Leg Multi-Sport Parlay",
+      "sport": "football",
+      "won": false,
+      "net": -300.0
+    }
+  ]
+}
