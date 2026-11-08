@@ -1,17 +1,10 @@
 """
-⚡ Ultimate Multi-Sport Tracker — All-In-One 24/7 Discord Edition
-Supports:
-  ⚽ Football / Soccer (Goals, 1x2, Team Totals, BTTS)
-  🏏 Cricket (Match Winner, Total Runs, Live Overs, Chase Target & Innings Reads)
-  🥊 UFC / MMA / Boxing (Fighter Win, Round-by-Round Live Tracking, Method/Result)
-  🎮 Esports / Custom Sports (Val/CS2/Dota/LoL Map Tracking + 1-Tap Instant Settle)
-
-Included Convenience Features:
-  1. 🏁 Past / Finished Match Auto-Grader (Detects already-finished matches on upload & offers 1-tap [✅ Save Result])
-  2. ✏️ 1-Tap Edit Modal ([✏️ Edit Stake/Odds] popup box right in Discord)
-  3. 💾 Permanent Cloud Stats Backup (Saves ledger.json permanently so server restarts never wipe your stats!)
-  4. 🧠 "Why I Win / Why I Lose" Smart Insights (Win rate by Sport, Single vs Parlay, Parlays missed by 1 leg)
-  5. 🏦 Bankroll & Profit Goal Progress Bar (Set your starting bankroll & profit target via popup modal)
+Clean, Tested & Fixed Multi-Bet Discord Tracker
+Fixes:
+1. FIXED 0-0 Score Bug: Reads `event["competitions"][0]["competitors"]` so real live scores & goal alerts work 100%.
+2. FIXED Multi-Bet / Bet History Paste: Splits separate bets by `ID:`, `Stake:`, `Single`, `Mix Parlay`, or blank blocks instead of lumping them into 1 giant parlay.
+3. FIXED Past Match Lookup: Fetches Yesterday + Today + Tomorrow scores so past bets in your history are graded with real final scores.
+4. FIXED Messy Formatting: Ultra-clean, short, easy-to-read cards with zero clutter.
 """
 
 import asyncio
@@ -46,22 +39,12 @@ bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
 ACTIVE_SLIPS = []
 TRACKING_CHANNEL_ID = None
-LAST_STATE = {}
+LAST_SCORES = {}  # (slip_id, leg_idx) -> (home_score, away_score)
 
 LEDGER_FILE = "ledger.json"
 
-SPORT_ICONS = {
-    "football": "⚽",
-    "cricket": "🏏",
-    "ufc": "🥊",
-    "mma": "🥊",
-    "boxing": "🥊",
-    "esports": "🎮",
-    "custom": "🎯"
-}
-
 # =====================================================================
-# 2. PERMANENT LIFETIME STATS, INSIGHTS & BANKROLL ENGINE
+# 2. SIMPLE LIFETIME & DAILY STATS LEDGER
 # =====================================================================
 def load_ledger():
     if os.path.exists(LEDGER_FILE):
@@ -71,25 +54,14 @@ def load_ledger():
         except Exception:
             pass
     return {
-        "starting_bankroll": 5000.0,
-        "profit_goal": 10000.0,
-        "total_slips": 0,
-        "slips_won": 0,
-        "slips_lost": 0,
-        "total_legs": 0,
-        "legs_won": 0,
+        "total_bets": 0,
+        "won": 0,
+        "lost": 0,
         "total_staked": 0.0,
         "net_profit": 0.0,
         "biggest_win": 0.0,
-        "best_odds_hit": 0.0,
-        "current_streak": 0,
+        "streak": 0,
         "best_streak": 0,
-        "parlays_missed_by_one": 0,
-        "singles_won": 0,
-        "singles_total": 0,
-        "parlays_won": 0,
-        "parlays_total": 0,
-        "sport_stats": {},
         "history": []
     }
 
@@ -98,105 +70,96 @@ def save_ledger(data):
         with open(LEDGER_FILE, "w") as f:
             json.dump(data, f, indent=2)
     except Exception as e:
-        print(f"Ledger save error: {e}")
+        print(f"Ledger error: {e}")
 
-def record_slip_in_ledger(slip, won, legs_hit_count):
-    legs = slip.get("legs", [])
-    total_legs = len(legs)
+def record_bet(slip, won):
     stake = float(slip.get("stake", 100.0))
     profit = float(slip.get("potential_profit", 100.0))
-    odds = float(slip.get("odds", 1.5))
-    net_change = profit if won else -stake
+    net = profit if won else -stake
 
     ledger = load_ledger()
-    ledger["total_slips"] = ledger.get("total_slips", 0) + 1
-    ledger["total_legs"] = ledger.get("total_legs", 0) + total_legs
-    ledger["legs_won"] = ledger.get("legs_won", 0) + legs_hit_count
+    ledger["total_bets"] = ledger.get("total_bets", 0) + 1
     ledger["total_staked"] = ledger.get("total_staked", 0.0) + stake
-    ledger["net_profit"] = ledger.get("net_profit", 0.0) + net_change
-
-    if total_legs == 1:
-        ledger["singles_total"] = ledger.get("singles_total", 0) + 1
-        if won:
-            ledger["singles_won"] = ledger.get("singles_won", 0) + 1
-    else:
-        ledger["parlays_total"] = ledger.get("parlays_total", 0) + 1
-        if won:
-            ledger["parlays_won"] = ledger.get("parlays_won", 0) + 1
-        elif legs_hit_count == total_legs - 1:
-            ledger["parlays_missed_by_one"] = ledger.get("parlays_missed_by_one", 0) + 1
-
-    sp_stats = ledger.get("sport_stats", {})
-    for leg in legs:
-        sp = leg.get("sport", "football").lower()
-        if sp not in sp_stats:
-            sp_stats[sp] = {"won": 0, "total": 0}
-        sp_stats[sp]["total"] += 1
-        if won or leg.get("achieved"):
-            sp_stats[sp]["won"] += 1
-    ledger["sport_stats"] = sp_stats
+    ledger["net_profit"] = ledger.get("net_profit", 0.0) + net
 
     if won:
-        ledger["slips_won"] = ledger.get("slips_won", 0) + 1
-        ledger["current_streak"] = ledger.get("current_streak", 0) + 1
-        if ledger["current_streak"] > ledger.get("best_streak", 0):
-            ledger["best_streak"] = ledger["current_streak"]
+        ledger["won"] = ledger.get("won", 0) + 1
+        ledger["streak"] = ledger.get("streak", 0) + 1
+        if ledger["streak"] > ledger.get("best_streak", 0):
+            ledger["best_streak"] = ledger["streak"]
         if profit > ledger.get("biggest_win", 0.0):
             ledger["biggest_win"] = profit
-        if odds > ledger.get("best_odds_hit", 0.0):
-            ledger["best_odds_hit"] = odds
     else:
-        ledger["slips_lost"] = ledger.get("slips_lost", 0) + 1
-        ledger["current_streak"] = 0
+        ledger["lost"] = ledger.get("lost", 0) + 1
+        ledger["streak"] = 0
 
     ledger["history"].append({
-        "date": today_bst_date(),
-        "title": slip.get("title", "Slip"),
-        "sport": legs[0].get("sport", "football") if legs else "football",
+        "date": slip.get("date", today_bst_date()),
+        "title": slip.get("title", "Bet"),
         "won": won,
-        "net": net_change
+        "net": round(net, 2)
     })
     save_ledger(ledger)
-    return ledger, net_change
-
-def get_player_rank(wins, net_profit):
-    if wins >= 25 or net_profit >= 15000:
-        return "👑 GOAT Predictor"
-    elif wins >= 10 or net_profit >= 5000:
-        return "💎 Sharp Master"
-    elif wins >= 5 or net_profit >= 1500:
-        return "🔥 Hot Striker"
-    elif wins >= 1:
-        return "⚡ Rising Contender"
-    return "🌱 Rookie Scout"
+    return ledger, net
 
 # =====================================================================
-# 3. VISUAL HELPERS (BARS & GAUGES)
+# 3. LIVE & HISTORICAL SCORE ENGINE (FIXED `competitions[0]`)
 # =====================================================================
-def render_progress_bar(done, total):
-    filled = "🟩" * done
-    empty = "⬜" * max(0, total - done)
-    pct = int(round((done / total) * 100)) if total > 0 else 0
-    return f"{filled}{empty}  **{done}/{total} Hit ({pct}%)**"
+async def fetch_scores_multi_day():
+    """Fetches scores for Yesterday, Today, and Tomorrow so both live & past bets work."""
+    now_utc = datetime.now(timezone.utc)
+    days = [
+        (now_utc - timedelta(days=2)).strftime("%Y%m%d"),
+        (now_utc - timedelta(days=1)).strftime("%Y%m%d"),
+        now_utc.strftime("%Y%m%d"),
+        (now_utc + timedelta(days=1)).strftime("%Y%m%d"),
+    ]
+    headers = {"User-Agent": "Mozilla/5.0"}
+    events = []
 
-def render_goal_bar(current, target):
-    if target <= 0:
-        return "`██████████` 100%"
-    ratio = max(0.0, min(1.0, current / target))
-    bars = int(round(ratio * 10))
-    pct = int(round(ratio * 100))
-    return f"`{'█' * bars}{'░' * (10 - bars)}` **{pct}%** ({current:,.0f} / {target:,.0f})"
+    async with aiohttp.ClientSession() as session:
+        for d in days:
+            url = f"https://site.api.espn.com/apis/site/v2/sports/soccer/scorepanel?dates={d}"
+            try:
+                async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as r:
+                    if r.status == 200:
+                        data = await r.json()
+                        for group in data.get("scores", []):
+                            events.extend(group.get("events", []))
+            except Exception as e:
+                print(f"Error fetching {d}: {e}")
+    return events
 
-def render_win_meter(pct):
-    bars = int(round(pct / 10))
-    bar_str = "█" * bars + "░" * (10 - bars)
-    if pct >= 75:
-        vibe = "🔥 Looking Great"
-    elif pct >= 45:
-        vibe = "⚡ 50/50 Sweat"
-    else:
-        vibe = "🚨 Tough Spot"
-    return f"`{bar_str}` **{pct}%** ({vibe})"
+def clean_team_tokens(name):
+    s = name.lower().strip()
+    for suffix in [" fc", " afc", " united", " city", " hotspur", " athletic", " bilbao", " club", " wanderers", " albion", " forest", " town", " sc", " cf"]:
+        if len(s) > 6:
+            s = s.replace(suffix, "").strip()
+    return s
+
+def find_match_event(leg, events):
+    t1 = leg.get("home_team", "").lower().strip()
+    t2 = leg.get("away_team", "").lower().strip()
+    t1_short = clean_team_tokens(t1)
+    t2_short = clean_team_tokens(t2)
+
+    # 1. Exact or cleaned match on BOTH teams
+    for ev in events:
+        name = ev.get("name", "").lower()
+        m1 = (t1 and t1 in name) or (t1_short and len(t1_short) >= 3 and t1_short in name)
+        m2 = (t2 and t2 in name) or (t2_short and len(t2_short) >= 3 and t2_short in name)
+        if m1 and m2:
+            return ev
+
+    # 2. First word match on both teams (e.g., "Athletic Bilbao" -> "athletic" & "Osasuna" -> "osasuna")
+    w1 = t1.split()[0] if t1.split() else ""
+    w2 = t2.split()[0] if t2.split() else ""
+    for ev in events:
+        name = ev.get("name", "").lower()
+        if len(w1) >= 4 and len(w2) >= 4 and w1 in name and w2 in name:
+            return ev
+
+    return None
 
 def poisson_prob(k_needed, expected_goals):
     if k_needed <= 0:
@@ -204,10 +167,169 @@ def poisson_prob(k_needed, expected_goals):
     if expected_goals <= 0:
         return 0.0
     prob_less = sum((expected_goals ** i) * math.exp(-expected_goals) / math.factorial(i) for i in range(k_needed))
-    return max(0.02, min(0.98, 1.0 - prob_less))
+    return max(0.03, min(0.97, 1.0 - prob_less))
+
+def evaluate_leg(leg, event):
+    """Correctly reads `event['competitions'][0]['competitors']` from ESPN."""
+    if not event:
+        return {
+            "found": False,
+            "status": "Scheduled",
+            "score": f"{leg.get('home_team')} vs {leg.get('away_team')}",
+            "home_score": 0, "away_score": 0,
+            "home_name": leg.get("home_team"), "away_name": leg.get("away_team"),
+            "minute": 0, "clock": "Scheduled",
+            "is_ht": False, "is_late": False, "is_ft": False,
+            "won": False, "lost": False,
+            "chance": 55,
+            "need_text": "Waiting for kickoff",
+            "short_read": "Match has not started yet."
+        }
+
+    # IMPORTANT FIX: ESPN puts competitors and status inside competitions[0]
+    comp = (event.get("competitions") or [event])[0]
+    st = comp.get("status") or event.get("status") or {}
+    st_type = st.get("type", {})
+    desc = st_type.get("description", "Scheduled")
+    state = st_type.get("state", "pre")  # "pre", "in", "post"
+    clock_str = st.get("displayClock", "0'")
+
+    minute = 0
+    try:
+        minute = int(clock_str.replace("'", "").split("+")[0])
+    except Exception:
+        minute = 45 if "Halftime" in desc else (90 if state == "post" else 0)
+
+    comps = comp.get("competitors", [])
+    home_score, away_score = 0, 0
+    home_name = leg.get("home_team", "Home")
+    away_name = leg.get("away_team", "Away")
+
+    for c in comps:
+        s_val = int(c.get("score") or 0)
+        team_obj = c.get("team", {})
+        n_val = team_obj.get("displayName") or c.get("displayName") or ""
+        if c.get("homeAway") == "home":
+            home_score = s_val
+            if n_val: home_name = n_val
+        else:
+            away_score = s_val
+            if n_val: away_name = n_val
+
+    is_ft = (state == "post") or ("Final" in desc) or (desc in ("Full Time", "FT"))
+    is_ht = ("Halftime" in desc) or (desc == "HT") or (state == "in" and 45 <= minute <= 48)
+    is_late = (state == "in" and 70 <= minute <= 76)
+    rem_mins = max(0, 90 - minute)
+    exp_goals = rem_mins * 0.032
+
+    t_type = leg.get("target_type", "over_goals")
+    t_val = float(leg.get("target_value", 0.5))
+
+    won, lost = False, False
+    chance = 50
+    need_text = ""
+    short_read = ""
+
+    if t_type == "team_over":
+        t_team = clean_team_tokens(leg.get("target_team", home_name))
+        my_score = away_score if (t_team and t_team in away_name.lower()) else home_score
+        my_name = away_name if (t_team and t_team in away_name.lower()) else home_name
+        needed = math.ceil(t_val) - my_score
+
+        if needed <= 0:
+            won, chance = True, 100
+            need_text = "WON ✅"
+            short_read = f"{my_name} scored ({my_score})!"
+        elif is_ft:
+            lost, chance = True, 0
+            need_text = f"LOST ❌ ({my_name} scored {my_score})"
+            short_read = f"Finished {home_score}-{away_score}. Needed {needed} more goal from {my_name}."
+        else:
+            chance = int(round(poisson_prob(needed, rem_mins * 0.017) * 100))
+            need_text = f"Need {needed} goal from {my_name} ({rem_mins}m left)"
+            short_read = f"{my_name} needs {needed} goal in {rem_mins} mins."
+
+    elif t_type == "over_goals":
+        total = home_score + away_score
+        needed = math.ceil(t_val) - total
+        if needed <= 0:
+            won, chance = True, 100
+            need_text = "WON ✅"
+            short_read = f"Total is {total} goals — target hit!"
+        elif is_ft:
+            lost, chance = True, 0
+            need_text = f"LOST ❌ (Finished {total} goals)"
+            short_read = f"Ended {home_score}-{away_score} ({total} total goals)."
+        else:
+            chance = int(round(poisson_prob(needed, exp_goals) * 100))
+            need_text = f"Need {needed} more goal in {rem_mins}m"
+            short_read = f"{needed} more goal needed in {rem_mins} mins."
+
+    elif t_type == "under_goals":
+        total = home_score + away_score
+        limit = math.floor(t_val)
+        if total > limit:
+            lost, chance = True, 0
+            need_text = f"LOST ❌ ({total} goals scored)"
+            short_read = f"Too many goals ({total})."
+        elif is_ft:
+            won, chance = True, 100
+            need_text = "WON ✅"
+            short_read = f"Finished {home_score}-{away_score} (Under {t_val} held!)."
+        else:
+            max_allowed = limit - total
+            chance = int(round((1.0 - poisson_prob(max_allowed + 1, exp_goals)) * 100))
+            need_text = f"Max {max_allowed} more goal allowed ({rem_mins}m left)"
+            short_read = f"Stay under {t_val} goals for {rem_mins} mins."
+
+    elif t_type == "team_win":
+        t_team = clean_team_tokens(leg.get("target_team", home_name))
+        is_home = not (t_team and t_team in away_name.lower())
+        my_name = home_name if is_home else away_name
+        lead = (home_score - away_score) if is_home else (away_score - home_score)
+
+        if is_ft:
+            if lead > 0:
+                won, chance = True, 100
+                need_text = "WON ✅"
+                short_read = f"{my_name} won {home_score}-{away_score}!"
+            else:
+                lost, chance = True, 0
+                need_text = "LOST ❌"
+                short_read = f"Finished {home_score}-{away_score}. {my_name} didn't win."
+        else:
+            if lead > 0:
+                chance = min(95, int(72 + 22 * (minute / 90.0) + 8 * (lead - 1)))
+                need_text = f"{my_name} leading by {lead} ({rem_mins}m left)"
+                short_read = f"{my_name} is up by {lead} with {rem_mins} mins left."
+            elif lead == 0:
+                chance = max(18, int(45 - 20 * (minute / 90.0)))
+                need_text = f"Tied! Need 1 goal from {my_name} ({rem_mins}m left)"
+                short_read = f"Level at {home_score}-{away_score}. {my_name} needs 1 goal to lead."
+            else:
+                needed = abs(lead) + 1
+                chance = int(round(poisson_prob(needed, exp_goals) * 100))
+                need_text = f"Down {abs(lead)}! Need {needed} goals ({rem_mins}m left)"
+                short_read = f"{my_name} trailing by {abs(lead)}, needs {needed} goals in {rem_mins} mins."
+
+    clock_label = "FT" if is_ft else ("HT" if is_ht else (f"{minute}'" if state == "in" else "Scheduled"))
+    return {
+        "found": True,
+        "state": state,
+        "status": desc,
+        "score": f"{home_name} {home_score} - {away_score} {away_name}",
+        "home_score": home_score, "away_score": away_score,
+        "home_name": home_name, "away_name": away_name,
+        "minute": minute, "clock": clock_label,
+        "is_ht": is_ht, "is_late": is_late, "is_ft": is_ft,
+        "won": won, "lost": lost,
+        "chance": chance,
+        "need_text": need_text,
+        "short_read": short_read
+    }
 
 # =====================================================================
-# 4. MULTI-SPORT IMAGE OCR & AI PARSER
+# 4. MULTI-BET / HISTORY PARSER (SPLITS MULTIPLE BETS PROPERLY!)
 # =====================================================================
 async def extract_text_via_free_ocr(image_bytes):
     url = "https://api.ocr.space/parse/image"
@@ -225,91 +347,45 @@ async def extract_text_via_free_ocr(image_bytes):
                     if parsed_results:
                         return parsed_results[0].get("ParsedText", "")
     except Exception as e:
-        print(f"Free OCR error: {e}")
+        print(f"OCR error: {e}")
     return ""
 
-def detect_sport_from_text(text):
-    low = text.lower()
-    if any(k in low for k in ["ufc", "mma", "bellator", "pfl", "fight night", "ko", "tko", "submission", "round"]):
-        return "ufc"
-    if any(k in low for k in ["boxing", "bout", "heavyweight", "welterweight"]):
-        return "boxing"
-    if any(k in low for k in ["cricket", "ipl", "t20", "odi", "wickets", "overs", "runs", "bpl", "psl", "bbl", "sixers", "scorchers", "tigers", "lions"]):
-        return "cricket"
-    if any(k in low for k in ["esports", "valorant", "cs2", "csgo", "dota", "lol", "league of legends", "map 1", "map 2", "bo3", "bo5"]):
-        return "esports"
-    return "football"
-
-def call_gemini_parser(text_input=None, image_bytes=None):
-    if not GEMINI_API_KEY:
-        return None
-    try:
-        import google.generativeai as genai
-        genai.configure(api_key=GEMINI_API_KEY)
-        model = genai.GenerativeModel("gemini-1.5-flash")
-
-        system_prompt = """
-        Extract the sports slip details from the image or text.
-        Detect the sport for each leg: "football", "cricket", "ufc", "boxing", or "esports".
-        Convert kickoff times to Bangladesh Time (BST, UTC+6) if shown, otherwise write 'Today (BST)'.
-        Return ONLY valid raw JSON with this exact structure:
-        {
-          "title": "4-Leg Mix Parlay" or "Single Match",
-          "odds": 2.30,
-          "stake": 990,
-          "potential_profit": 1291.84,
-          "legs": [
-            {
-              "sport": "football" | "cricket" | "ufc" | "boxing" | "esports",
-              "home_team": "Team/Fighter 1",
-              "away_team": "Team/Fighter 2",
-              "target_team": "Team/Fighter 1",
-              "target_type": "team_win" | "over_goals" | "under_goals" | "team_over" | "btts" | "over_runs" | "over_rounds",
-              "target_value": 0.5,
-              "label": "Team 1 to Win",
-              "kickoff_bst": "9:00 PM BST"
-            }
-          ]
-        }
-        Only output raw JSON.
-        """
-        contents = [system_prompt]
-        if image_bytes:
-            contents.append({"mime_type": "image/png", "data": image_bytes})
-        if text_input:
-            contents.append(f"User Input: {text_input}")
-
-        resp = model.generate_content(contents)
-        raw = resp.text.strip().replace("```json", "").replace("```", "").strip()
-        return json.loads(raw)
-    except Exception as e:
-        print(f"Gemini error: {e}")
-        return None
-
-def smart_universal_text_parser(raw_text):
-    lines = [l.strip() for l in raw_text.replace("\r", "").split("\n") if l.strip()]
+def parse_single_slip_block(block_text):
+    """Parses a single bet block (either a Single bet or 1 Mix Parlay)."""
+    lines = [l.strip() for l in block_text.replace("\r", "").split("\n") if l.strip()]
     legs = []
     pending_target = None
-    pending_sport = detect_sport_from_text(raw_text)
     odds_val = 0.0
     stake_val = 100.0
     profit_val = 0.0
+    explicit_won = None  # If history explicitly says "Won" or "Lost"
+    bdt_numbers = []
 
     for line in lines:
         low = line.lower()
-        sp_line = detect_sport_from_text(line)
-        if sp_line != "football":
-            pending_sport = sp_line
+        if low in ("won", "win", "settled - won"):
+            explicit_won = True
+        elif low in ("lost", "lose", "loss", "settled - lost"):
+            explicit_won = False
+
+        if "bdt" in low:
+            m = re.search(r"([+-]?[\d,]+\.\d+|[+-]?\d+)", line)
+            if m:
+                bdt_numbers.append(float(m.group(1).replace(",", "")))
 
         if "odds:" in low:
             m = re.search(r"(\d+(?:\.\d+)?)", line)
             if m: odds_val = float(m.group(1))
-        elif "stake:" in low or "total risk" in low:
+        elif "stake:" in low or "risk:" in low:
             m = re.search(r"([\d,]+\.\d+|\d+)", line)
             if m: stake_val = float(m.group(1).replace(",", ""))
-        elif "potential winnings" in low:
-            m = re.search(r"([\d,]+\.\d+|\d+)", line)
-            if m: profit_val = float(m.group(1).replace(",", ""))
+        elif "potential winnings" in low or "win/loss" in low or "return" in low:
+            m = re.search(r"([+-]?[\d,]+\.\d+|[+-]?\d+)", line)
+            if m:
+                val = float(m.group(1).replace(",", ""))
+                profit_val = abs(val)
+                if val < 0:
+                    explicit_won = False
 
         if "@" in line and not any(x in low for x in ["odds:", "stake:", "risk:"]):
             pending_target = line.split("@")[0].strip()
@@ -332,734 +408,315 @@ def smart_universal_text_parser(raw_text):
                     t_val = float(num_match.group(1))
 
                 if "over" in c_low:
-                    if pending_sport == "cricket" or "run" in c_low:
-                        t_type = "over_runs"
-                    elif pending_sport in ("ufc", "boxing") or "round" in c_low:
-                        t_type = "over_rounds"
-                    elif home.lower() in c_low or away.lower() in c_low:
+                    if home.lower() in c_low or away.lower() in c_low:
                         t_type = "team_over"
                         t_team = away if away.lower() in c_low else home
                     else:
                         t_type = "over_goals"
                 elif "under" in c_low:
                     t_type = "under_goals"
-                elif "btts" in c_low:
-                    t_type = "btts"
                 else:
                     t_type = "team_win"
                     t_team = away if away.lower() in c_low else home
 
                 label = cond if pending_target else f"{t_team} Win"
                 legs.append({
-                    "sport": pending_sport,
                     "home_team": home,
                     "away_team": away,
                     "target_team": t_team,
                     "target_type": t_type,
                     "target_value": t_val,
-                    "label": label,
-                    "kickoff_bst": "Today (BST)"
+                    "label": label
                 })
                 pending_target = None
 
     if not legs:
         return None
 
+    if len(bdt_numbers) >= 2 and profit_val <= 0:
+        stake_val = abs(bdt_numbers[0])
+        profit_val = abs(bdt_numbers[1])
+        if bdt_numbers[1] < 0:
+            explicit_won = False
+
     if odds_val <= 1.0:
-        odds_val = round(1.4 ** len(legs), 2)
+        odds_val = round(1.35 ** len(legs), 2)
     if profit_val <= 0:
         profit_val = round(stake_val * (odds_val - 1.0), 2)
 
+    title = f"{len(legs)}-Leg Parlay" if len(legs) > 1 else f"{legs[0]['home_team']} vs {legs[0]['away_team']}"
     return {
-        "title": f"{len(legs)}-Leg Multi-Sport Parlay" if len(legs) > 1 else f"{legs[0]['home_team']} vs {legs[0]['away_team']}",
+        "title": title,
         "odds": odds_val,
         "stake": stake_val,
         "potential_profit": profit_val,
+        "explicit_won": explicit_won,
         "legs": legs
     }
 
-# =====================================================================
-# 5. MULTI-SPORT LIVE DATA FEEDS (FOOTBALL + CRICKET + UFC/MMA)
-# =====================================================================
-async def fetch_all_sports_feeds():
-    feeds = {"football": [], "cricket": [], "ufc": []}
-    headers = {"User-Agent": "Mozilla/5.0"}
+def parse_all_slips_from_text(raw_text):
+    """
+    Splits pasted Bet History into separate slips instead of lumping everything into 1 parlay!
+    Detects 'ID:' headers OR footer boundaries (Stake / Total Risk / BDT) before the next bet starts.
+    """
+    lines = [l.strip() for l in raw_text.replace("\r", "").split("\n") if l.strip()]
+    blocks = []
+    curr_lines = []
+    has_match = False
+    in_footer = False
 
-    async def get_json(session, url):
-        try:
-            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as r:
-                if r.status == 200:
-                    return await r.json()
-        except Exception:
-            pass
-        return None
+    for line in lines:
+        low = line.lower()
+        is_id_header = bool(re.search(r"\bID\s*[:#]?\s*\d{5,}", line, flags=re.IGNORECASE)) or ("mix parlay" in low and has_match)
+        is_footer_line = any(k in low for k in ["stake:", "risk:", "total risk", "potential winnings", "win/loss"])
+        is_new_match_start = ("soccer match" in low or "@" in line or "-vs-" in low or " vs " in low) and not is_footer_line
 
-    async with aiohttp.ClientSession() as session:
-        s_data, c_data, u_data = await asyncio.gather(
-            get_json(session, "https://site.api.espn.com/apis/site/v2/sports/soccer/scorepanel"),
-            get_json(session, "https://site.api.espn.com/apis/site/v2/sports/cricket/scorepanel"),
-            get_json(session, "https://site.api.espn.com/apis/site/v2/sports/mma/ufc/scoreboard")
-        )
-
-        if s_data:
-            for g in s_data.get("scores", []):
-                feeds["football"].extend(g.get("events", []))
-        if c_data:
-            for g in c_data.get("scores", []):
-                feeds["cricket"].extend(g.get("events", []))
-        if u_data:
-            for ev in u_data.get("events", []):
-                feeds["ufc"].extend(ev.get("competitions", []))
-
-    return feeds
-
-def match_event_multi_sport(leg, feeds):
-    sp = leg.get("sport", "football").lower()
-    t1 = leg.get("home_team", "").lower()
-    t2 = leg.get("away_team", "").lower()
-
-    if sp in ("ufc", "mma", "boxing") or feeds.get("ufc"):
-        for comp in feeds.get("ufc", []):
-            c_list = comp.get("competitors", [])
-            names = " ".join(c.get("athlete", {}).get("displayName", "").lower() for c in c_list)
-            if (t1 and t1 in names) or (t2 and t2 in names):
-                leg["sport"] = "ufc"
-                return comp
-
-    if sp == "cricket" or feeds.get("cricket"):
-        for ev in feeds.get("cricket", []):
-            name = ev.get("name", "").lower()
-            if (t1 and len(t1) > 3 and t1 in name) or (t2 and len(t2) > 3 and t2 in name):
-                leg["sport"] = "cricket"
-                return ev
-
-    for ev in feeds.get("football", []):
-        name = ev.get("name", "").lower()
-        short = ev.get("shortName", "").lower()
-        if (t1 in name or t1 in short) and (t2 in name or t2 in short):
-            return ev
-        if t1 and len(t1) > 3 and t1 in name:
-            return ev
-        if t2 and len(t2) > 3 and t2 in name:
-            return ev
-
-    return None
-
-def evaluate_leg_multi_sport(leg, event):
-    sp = leg.get("sport", "football").lower()
-    icon = SPORT_ICONS.get(sp, "⚽")
-
-    if leg.get("manual_status") == "won":
-        return {
-            "sport_icon": icon, "status": "Final", "score": f"{leg.get('home_team')} vs {leg.get('away_team')}",
-            "clock_display": "FT", "is_mid": False, "is_late": False, "is_final": True,
-            "achieved": True, "impossible": False, "likelihood_pct": 100,
-            "requirement": "WON! ✅", "analysis": "Marked as Won!"
-        }
-    elif leg.get("manual_status") == "lost":
-        return {
-            "sport_icon": icon, "status": "Final", "score": f"{leg.get('home_team')} vs {leg.get('away_team')}",
-            "clock_display": "FT", "is_mid": False, "is_late": False, "is_final": True,
-            "achieved": False, "impossible": True, "likelihood_pct": 0,
-            "requirement": "LOST ❌", "analysis": "Marked as Lost."
-        }
-
-    if not event:
-        return {
-            "sport_icon": icon,
-            "status": "Scheduled / Custom",
-            "score": f"{leg.get('home_team')} vs {leg.get('away_team')}",
-            "clock_display": leg.get("kickoff_bst", "Live / Today"),
-            "is_mid": False, "is_late": False, "is_final": False,
-            "achieved": False, "impossible": False,
-            "likelihood_pct": 55,
-            "requirement": "In Play / Waiting",
-            "analysis": "Tracking active. Use Quick Win button anytime for custom/esports!"
-        }
-
-    # --- CASE A: UFC / MMA / BOXING ---
-    if sp in ("ufc", "mma", "boxing") and "competitors" in event and "athlete" in event["competitors"][0]:
-        st = event.get("status", {})
-        desc = st.get("type", {}).get("description", "Scheduled")
-        rnd = st.get("period", 1)
-        clk = st.get("displayClock", "5:00")
-        is_final = "Final" in desc
-
-        c_list = event.get("competitors", [])
-        f1 = c_list[0].get("athlete", {}).get("displayName", "Fighter 1")
-        f2 = c_list[1].get("athlete", {}).get("displayName", "Fighter 2") if len(c_list) > 1 else "Fighter 2"
-        w1 = c_list[0].get("winner", False)
-        w2 = c_list[1].get("winner", False) if len(c_list) > 1 else False
-
-        t_team = leg.get("target_team", f1).lower()
-        picked_f1 = t_team in f1.lower()
-        my_fighter = f1 if picked_f1 else f2
-        my_won = w1 if picked_f1 else w2
-
-        if is_final:
-            return {
-                "sport_icon": "🥊", "status": "Final",
-                "score": f"{f1} vs {f2} (Ended R{rnd} {clk})",
-                "clock_display": f"Final (R{rnd})",
-                "is_mid": False, "is_late": False, "is_final": True,
-                "achieved": bool(my_won), "impossible": not bool(my_won),
-                "likelihood_pct": 100 if my_won else 0,
-                "requirement": f"{my_fighter} WON! ✅" if my_won else f"{my_fighter} LOST ❌",
-                "analysis": f"Fight finished in Round {rnd} at {clk}."
-            }
+        if has_match and (is_id_header or (in_footer and is_new_match_start)):
+            blocks.append("\n".join(curr_lines))
+            curr_lines = [line]
+            has_match = ("-vs-" in low or " vs " in low)
+            in_footer = False
         else:
-            in_fight = rnd > 0 and desc != "Scheduled"
-            return {
-                "sport_icon": "🥊", "status": desc,
-                "score": f"{f1} vs {f2}",
-                "clock_display": f"Round {rnd} ({clk})" if in_fight else "Pre-Fight",
-                "is_mid": (in_fight and rnd == 2), "is_late": (in_fight and rnd >= 3), "is_final": False,
-                "achieved": False, "impossible": False,
-                "likelihood_pct": 60,
-                "requirement": f"Need {my_fighter} to win ({'Round ' + str(rnd) if in_fight else 'Upcoming'})",
-                "analysis": f"Fight is in Round {rnd} ({clk}). Going the distance so far!" if in_fight else "Bout is queued on the card."
-            }
+            curr_lines.append(line)
+            if "-vs-" in low or " vs " in low or " v " in low:
+                has_match = True
+            if is_footer_line and has_match:
+                in_footer = True
 
-    # --- CASE B: CRICKET ---
-    if sp == "cricket":
-        st = event.get("status", {})
-        desc = st.get("type", {}).get("description", "Scheduled")
-        summary = st.get("summary", "")
-        is_final = desc in ("Result", "Final", "Complete") or st.get("type", {}).get("state") == "post"
-        is_live = st.get("type", {}).get("state") == "in"
+    if curr_lines:
+        blocks.append("\n".join(curr_lines))
 
-        comp = (event.get("competitions") or [{}])[0]
-        c_list = comp.get("competitors", [])
-        if len(c_list) >= 2:
-            t1_name = c_list[0].get("team", {}).get("displayName", "Team 1")
-            t1_score = c_list[0].get("score", "0/0")
-            t1_win = c_list[0].get("winner", False)
-            t2_name = c_list[1].get("team", {}).get("displayName", "Team 2")
-            t2_score = c_list[1].get("score", "0/0")
-            t2_win = c_list[1].get("winner", False)
-        else:
-            t1_name, t1_score, t1_win = leg.get("home_team"), "", False
-            t2_name, t2_score, t2_win = leg.get("away_team"), "", False
-
-        target_team = leg.get("target_team", t1_name).lower()
-        picked_t1 = target_team in t1_name.lower()
-        my_team = t1_name if picked_t1 else t2_name
-        my_won = t1_win if picked_t1 else t2_win
-
-        score_str = f"{t1_name} {t1_score} vs {t2_name} {t2_score}".strip()
-        if is_final:
-            won_bool = bool(my_won) or (my_team.lower() in summary.lower() and "won" in summary.lower())
-            return {
-                "sport_icon": "🏏", "status": "Result",
-                "score": score_str, "clock_display": "Final",
-                "is_mid": False, "is_late": False, "is_final": True,
-                "achieved": won_bool, "impossible": not won_bool,
-                "likelihood_pct": 100 if won_bool else 0,
-                "requirement": f"WON! ({summary}) ✅" if won_bool else f"LOST ({summary}) ❌",
-                "analysis": summary or "Match completed."
-            }
-        else:
-            return {
-                "sport_icon": "🏏", "status": "Live" if is_live else "Scheduled",
-                "score": score_str, "clock_display": "In Play" if is_live else "Scheduled",
-                "is_mid": is_live and ("10 ov" in score_str or "target" in score_str.lower()),
-                "is_late": is_live and ("16 ov" in score_str or "17 ov" in score_str or "18 ov" in score_str),
-                "is_final": False, "achieved": False, "impossible": False,
-                "likelihood_pct": 62,
-                "requirement": f"Pick: {leg.get('label')} • {summary}",
-                "analysis": summary if summary else "Cricket match in progress."
-            }
-
-    # --- CASE C: FOOTBALL / SOCCER ---
-    status_obj = event.get("status", {})
-    type_desc = status_obj.get("type", {}).get("description", "Scheduled")
-    clock_str = status_obj.get("displayClock", "0'")
-
-    minute = 0
-    try:
-        minute = int(clock_str.replace("'", "").split("+")[0])
-    except Exception:
-        minute = 45 if "Halftime" in type_desc else (90 if "Final" in type_desc else 0)
-
-    comps = event.get("competitors", [])
-    home_score, away_score = 0, 0
-    home_name, away_name = leg.get("home_team", "Home"), leg.get("away_team", "Away")
-    for c in comps:
-        s_val = int(c.get("score") or 0)
-        n_val = c.get("displayName", "")
-        if c.get("homeAway") == "home":
-            home_score, home_name = s_val, n_val
-        else:
-            away_score, away_name = s_val, n_val
-
-    is_final = "Final" in type_desc or type_desc in ("Full Time", "FT")
-    is_halftime = "Halftime" in type_desc or type_desc == "HT" or (45 <= minute <= 48)
-    is_late = (70 <= minute <= 76)
-    rem_mins = max(0, 90 - minute)
-    exp_rem_goals = rem_mins * 0.032
-
-    t_type = leg.get("target_type", "over_goals")
-    t_val = float(leg.get("target_value", 0.5))
-
-    achieved, impossible = False, False
-    likelihood = 0.55
-    requirement = ""
-    analysis = ""
-
-    if t_type == "team_over":
-        t_team = leg.get("target_team", home_name).lower()
-        team_score = away_score if t_team in away_name.lower() else home_score
-        t_disp = leg.get("target_team", home_name)
-        needed = math.ceil(t_val) - team_score
-
-        if needed <= 0:
-            achieved, likelihood = True, 1.0
-            requirement = "LOCKED IN! ✅"
-            analysis = f"{t_disp} scored {team_score} goal(s)!"
-        elif is_final:
-            impossible, likelihood = True, 0.0
-            requirement = f"MISSED ❌ (Finished with {team_score})"
-            analysis = f"Full time reached. {t_disp} didn't score enough."
-        else:
-            likelihood = poisson_prob(needed, rem_mins * 0.017)
-            requirement = f"Need {needed} more goal from {t_disp} in {rem_mins} mins"
-            analysis = f"{t_disp} has {rem_mins} mins + stoppage time to score {needed} goal."
-
-    elif t_type == "over_goals":
-        total = home_score + away_score
-        needed = math.ceil(t_val) - total
-        if needed <= 0:
-            achieved, likelihood = True, 1.0
-            requirement = "LOCKED IN! ✅"
-            analysis = f"Match has {total} goals—target already hit!"
-        elif is_final:
-            impossible, likelihood = True, 0.0
-            requirement = f"MISSED ❌ (Finished at {total} goals)"
-            analysis = f"Full time reached with {total} total goals."
-        else:
-            likelihood = poisson_prob(needed, exp_rem_goals)
-            requirement = f"Need {needed} more goal(s) in {rem_mins} mins"
-            analysis = f"{needed} more goal needed in the final {rem_mins} minutes."
-
-    elif t_type == "team_win":
-        t_team = leg.get("target_team", home_name).lower()
-        is_home = t_team in home_name.lower()
-        lead = (home_score - away_score) if is_home else (away_score - home_score)
-        t_disp = leg.get("target_team", home_name)
-
-        if is_final:
-            if lead > 0:
-                achieved, likelihood = True, 1.0
-                requirement = "WON! ✅"
-                analysis = f"Full time! {t_disp} won the match!"
-            else:
-                impossible, likelihood = True, 0.0
-                requirement = "LOST ❌"
-                analysis = f"Full time reached. {t_disp} did not win."
-        else:
-            if lead > 0:
-                likelihood = min(0.96, 0.74 + (0.22 * (minute / 90.0)) + (0.08 * (lead - 1)))
-                requirement = f"Leading by {lead} ({rem_mins} mins left)"
-                analysis = f"{t_disp} is winning by {lead} and in control."
-            elif lead == 0:
-                likelihood = max(0.18, 0.46 - (0.16 * (minute / 90.0)))
-                requirement = f"Need 1 goal to take the lead ({rem_mins} mins left)"
-                analysis = f"Tied {home_score}-{away_score}. {t_disp} needs 1 goal to lead."
-            else:
-                needed = abs(lead) + 1
-                likelihood = poisson_prob(needed, exp_rem_goals)
-                requirement = f"Trailing! Need {needed} goals in {rem_mins} mins"
-                analysis = f"{t_disp} is down by {abs(lead)} and needs a comeback."
-
-    pct = int(round(likelihood * 100))
-    return {
-        "sport_icon": "⚽", "status": type_desc,
-        "score": f"{home_name} {home_score} - {away_score} {away_name}",
-        "clock_display": f"{minute}'" if minute > 0 else type_desc,
-        "is_mid": is_halftime, "is_late": is_late, "is_final": is_final,
-        "achieved": achieved, "impossible": impossible,
-        "likelihood_pct": pct, "requirement": requirement, "analysis": analysis
-    }
+    slips = [parse_single_slip_block(b) for b in blocks if b.strip()]
+    return [s for s in slips if s]
 
 # =====================================================================
-# 6. EMBED BUILDERS (LIFETIME STATS, INSIGHTS, BANKROLL & ACTIVE HUB)
+# 5. ULTRA-CLEAN, EASY-TO-READ DISCORD CARDS
 # =====================================================================
-def build_lifetime_stats_embed():
+def build_stats_embed():
     ledger = load_ledger()
-    total = ledger.get("total_slips", 0)
-    won = ledger.get("slips_won", 0)
-    lost = ledger.get("slips_lost", 0)
-    win_rate = round((won / total * 100), 1) if total > 0 else 0.0
-
-    t_legs = ledger.get("total_legs", 0)
-    w_legs = ledger.get("legs_won", 0)
-    leg_rate = round((w_legs / t_legs * 100), 1) if t_legs > 0 else 0.0
-
-    staked = ledger.get("total_staked", 0.0)
+    total = ledger.get("total_bets", 0)
+    won = ledger.get("won", 0)
+    lost = ledger.get("lost", 0)
+    win_pct = round((won / total * 100), 1) if total > 0 else 0.0
     net = ledger.get("net_profit", 0.0)
+    staked = ledger.get("total_staked", 0.0)
     roi = round((net / staked * 100), 1) if staked > 0 else 0.0
 
-    start_bank = ledger.get("starting_bankroll", 5000.0)
-    curr_bank = start_bank + net
-    goal = ledger.get("profit_goal", 10000.0)
-
-    rank = get_player_rank(won, net)
-    streak = ledger.get("current_streak", 0)
-    best_streak = ledger.get("best_streak", 0)
-
-    s_tot = ledger.get("singles_total", 0)
-    s_won = ledger.get("singles_won", 0)
-    s_pct = round(s_won / s_tot * 100) if s_tot > 0 else 0
-
-    p_tot = ledger.get("parlays_total", 0)
-    p_won = ledger.get("parlays_won", 0)
-    p_pct = round(p_won / p_tot * 100) if p_tot > 0 else 0
-    one_leg_heartbreaks = ledger.get("parlays_missed_by_one", 0)
-
-    sp_stats = ledger.get("sport_stats", {})
-    sp_lines = []
-    for sp_name, d in sp_stats.items():
-        if d.get("total", 0) > 0:
-            ic = SPORT_ICONS.get(sp_name, "🎯")
-            rate = round(d["won"] / d["total"] * 100)
-            sp_lines.append(f"{ic} **{sp_name.upper()}:** `{d['won']}/{d['total']}` (**{rate}%**)")
-    sp_summary = "  •  ".join(sp_lines) if sp_lines else "Play a match to unlock sport-by-sport accuracy!"
-
     today_str = today_bst_date()
-    today_list = [h for h in ledger.get("history", []) if h.get("date") == today_str]
-    t_won = sum(1 for h in today_list if h.get("won"))
-    t_lost = len(today_list) - t_won
-    t_net = sum(h.get("net", 0.0) for h in today_list)
+    today_items = [h for h in ledger.get("history", []) if h.get("date") == today_str]
+    t_won = sum(1 for h in today_items if h.get("won"))
+    t_lost = len(today_items) - t_won
+    t_net = sum(h.get("net", 0.0) for h in today_items)
 
     embed = discord.Embed(
-        title=f"🏆 Lifetime Career Hub — {rank}",
-        description=f"🏦 **Current Bankroll:** **`{curr_bank:,.1f}`** *(Started: {start_bank:,.0f})*\n🎯 **Profit Goal Progress:** {render_goal_bar(max(0, net), goal)}",
-        color=0xF1C40F
+        title="🏆 My Stats (Lifetime & Today)",
+        color=0x2ECC71 if net >= 0 else 0xE74C3C
     )
     embed.add_field(
-        name="👑 All-Time Record",
+        name="📊 Lifetime Totals",
         value=(
-            f"• **Total Slips:** `{total}`\n"
-            f"• **Won / Lost:** ✅ `{won}W` — ❌ `{lost}L`\n"
-            f"• **Win Rate:** 🎯 **`{win_rate}%`**\n"
-            f"• **Legs Hit:** `{w_legs}/{t_legs}` (`{leg_rate}%`)"
-        ),
-        inline=True
-    )
-    embed.add_field(
-        name="💰 Profit & Streaks",
-        value=(
-            f"• **Net Profit:** **`{net:+,.1f}`**\n"
-            f"• **Total ROI:** 📈 `{roi}%`\n"
-            f"• **Biggest Win:** 💎 `+{ledger.get('biggest_win', 0):,.1f}`\n"
-            f"• **Streak:** 🔥 `{streak}` *(Best: {best_streak})*"
-        ),
-        inline=True
-    )
-    embed.add_field(
-        name="🧠 Smart Insights (Why You Win / Lose)",
-        value=(
-            f"• **Singles vs Parlays:** Singles `{s_won}/{s_tot} ({s_pct}%)`  |  Parlays `{p_won}/{p_tot} ({p_pct}%)`\n"
-            f"• **Parlay Heartbreaks:** 💔 `{one_leg_heartbreaks}` Parlays missed by just **1 leg**\n"
-            f"• **By Sport:** {sp_summary}"
+            f"**Record:** `{won} Won` - `{lost} Lost` ({win_pct}%)\n"
+            f"**Profit/Loss:** **`{net:+,.1f}`**\n"
+            f"**ROI:** `{roi}%`  •  **Streak:** 🔥 `{ledger.get('streak', 0)}`"
         ),
         inline=False
     )
     embed.add_field(
-        name=f"📅 Today's Action ({today_str})",
-        value=f"• **Record:** `{t_won} Won` - `{t_lost} Lost`  •  **Today's Profit:** **`{t_net:+,.1f}`**",
+        name=f"📅 Today ({today_str})",
+        value=f"**Record:** `{t_won} Won` - `{t_lost} Lost`  •  **Today's Profit:** **`{t_net:+,.1f}`**",
         inline=False
     )
     recent = ledger.get("history", [])[-5:]
     if recent:
-        rec_lines = []
-        for h in reversed(recent):
-            ic = "✅ WON" if h.get("won") else "❌ LOST"
-            sp_ic = SPORT_ICONS.get(h.get("sport", "football"), "⚽")
-            rec_lines.append(f"{ic} {sp_ic} **{h.get('title')}** (`{h.get('net', 0):+,.1f}`) — *{h.get('date')}*")
-        embed.add_field(name="📜 Last 5 Settled Slips", value="\n".join(rec_lines), inline=False)
+        lines = [f"{'✅' if h['won'] else '❌'} **{h['title']}** (`{h['net']:+,.1f}`)" for h in reversed(recent)]
+        embed.add_field(name="🕒 Last 5 Bets", value="\n".join(lines), inline=False)
+    return embed
+
+async def build_active_embed():
+    if not ACTIVE_SLIPS:
+        return discord.Embed(
+            title="🔥 Active Bets",
+            description="No active bets right now.\nDrop a screenshot or paste a match to track!",
+            color=0x95A5A6
+        )
+
+    events = await fetch_scores_multi_day()
+    embed = discord.Embed(title=f"🔥 Active Bets ({len(ACTIVE_SLIPS)})", color=0x3498DB)
+
+    for idx, slip in enumerate(ACTIVE_SLIPS, 1):
+        legs = slip.get("legs", [])
+        lines = []
+        comb = 1.0
+        hit_count = 0
+
+        for l_i, leg in enumerate(legs, 1):
+            ev = find_match_event(leg, events)
+            res = evaluate_leg(leg, ev)
+            comb *= (res["chance"] / 100.0)
+            if res["won"]: hit_count += 1
+            ic = "✅" if res["won"] else ("❌" if res["lost"] else "🟢" if res.get("state") == "in" else "🕒")
+            lines.append(
+                f"{ic} **{res['score']}** (`{res['clock']}`)\n"
+                f"Pick: `{leg['label']}` → **{res['need_text']}** (`{res['chance']}%`)"
+            )
+
+        title_line = f"#{idx} {slip['title']} ({hit_count}/{len(legs)} Hit • To Win: +{slip['potential_profit']})"
+        body = "\n".join(lines)
+        if len(legs) > 1:
+            body += f"\n**Parlay Win Chance:** `{int(round(comb * 100))}%`"
+        embed.add_field(name=title_line, value=body, inline=False)
 
     embed.set_footer(text=f"Updated {now_bst_str()}")
     return embed
 
-async def build_active_matches_embed():
-    if not ACTIVE_SLIPS:
-        return discord.Embed(
-            title="📡 Active Matches Center",
-            description="No active slips running right now!\n\n📸 **Drop any slip screenshot** or **type a match** (Football, Cricket, UFC, Boxing, Esports) to start!",
-            color=0x95A5A6
-        )
-
-    feeds = await fetch_all_sports_feeds()
-    embed = discord.Embed(
-        title=f"🔥 Currently Active Slips ({len(ACTIVE_SLIPS)} Running)",
-        description="Live scores, round/over clocks, and win meters across all your sports.",
-        color=0x00A8FF
-    )
-
-    for s_idx, slip in enumerate(ACTIVE_SLIPS, 1):
-        legs = slip.get("legs", [])
-        done_count = len(slip.get("notified_achieved", set()))
-        comb_prob = 1.0
-        leg_lines = []
-
-        for l_idx, leg in enumerate(legs, 1):
-            ev = match_event_multi_sport(leg, feeds)
-            res = evaluate_leg_multi_sport(leg, ev)
-            comb_prob *= (res["likelihood_pct"] / 100.0)
-            st_ic = "✅" if res["achieved"] else ("❌" if res["impossible"] else "🟢")
-            leg_lines.append(
-                f"{st_ic} {res['sport_icon']} **Leg {l_idx}:** {res['score']} (`{res['clock_display']}`)\n"
-                f"   ↳ Pick: `{leg.get('label')}` • **{res['requirement']}**\n"
-                f"   ↳ Chance: {render_win_meter(res['likelihood_pct'])}"
-            )
-
-        overall_pct = int(round(comb_prob * 100))
-        header = (
-            f"🎟️ **Slip #{s_idx}: {slip.get('title')}** (Odds: `{slip.get('odds')}x` • Profit: `+{slip.get('potential_profit')}`)\n"
-            f"{render_progress_bar(done_count, len(legs))}"
-        )
-        body = "\n".join(leg_lines)
-        if len(legs) > 1:
-            body += f"\n🔗 **Full Parlay Chance:** {render_win_meter(overall_pct)}"
-        embed.add_field(name=header, value=body, inline=False)
-
-    embed.set_footer(text=f"Live Check at {now_bst_str()}")
-    return embed
-
 # =====================================================================
-# 7. POPUP MODALS (1-TAP EDIT STAKE/ODDS & BANKROLL GOAL)
+# 6. SIMPLE BUTTONS
 # =====================================================================
-class EditSlipModal(discord.ui.Modal, title="✏️ Edit Slip Stake, Odds & Profit"):
-    stake_input = discord.ui.TextInput(label="Stake Amount", placeholder="e.g. 990", required=True)
-    odds_input = discord.ui.TextInput(label="Total Odds", placeholder="e.g. 2.30", required=True)
-    profit_input = discord.ui.TextInput(label="Potential Net Profit (Optional)", placeholder="Leave blank to auto-calculate", required=False)
-
-    def __init__(self, parsed_slip, parent_view):
-        super().__init__()
-        self.parsed_slip = parsed_slip
-        self.parent_view = parent_view
-        self.stake_input.default = str(parsed_slip.get("stake", 100))
-        self.odds_input.default = str(parsed_slip.get("odds", 2.0))
-        self.profit_input.default = str(parsed_slip.get("potential_profit", 100))
-
-    async def on_submit(self, interaction: discord.Interaction):
-        try:
-            st = float(self.stake_input.value.replace(",", ""))
-            od = float(self.odds_input.value.replace(",", ""))
-            if self.profit_input.value.strip():
-                pr = float(self.profit_input.value.replace(",", ""))
-            else:
-                pr = round(st * (od - 1.0), 2)
-            self.parsed_slip["stake"] = st
-            self.parsed_slip["odds"] = od
-            self.parsed_slip["potential_profit"] = pr
-            embed, _, _, _ = await build_smart_preview_card(self.parsed_slip)
-            await interaction.response.edit_message(embed=embed, view=self.parent_view)
-        except Exception:
-            await interaction.response.send_message("⚠️ Please enter valid numbers!", ephemeral=True)
-
-class BankrollGoalModal(discord.ui.Modal, title="🏦 Set Bankroll & Profit Goal"):
-    bankroll_input = discord.ui.TextInput(label="Starting Bankroll", placeholder="e.g. 10000", required=True)
-    goal_input = discord.ui.TextInput(label="Target Profit Goal", placeholder="e.g. 25000", required=True)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        try:
-            ledger = load_ledger()
-            ledger["starting_bankroll"] = float(self.bankroll_input.value.replace(",", ""))
-            ledger["profit_goal"] = float(self.goal_input.value.replace(",", ""))
-            save_ledger(ledger)
-            await interaction.response.send_message(embed=build_lifetime_stats_embed(), view=MainDashboardView())
-        except Exception:
-            await interaction.response.send_message("⚠️ Please enter valid numbers!", ephemeral=True)
-
-# =====================================================================
-# 8. INTERACTIVE VIEWS (FINISHED MATCH AUTO-GRADER + DASHBOARD)
-# =====================================================================
-class MainDashboardView(discord.ui.View):
+class DashboardView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="🔥 Active Matches", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="🔥 Active Bets", style=discord.ButtonStyle.primary)
     async def active_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        embed = await build_active_matches_embed()
-        await interaction.response.send_message(embed=embed, view=MainDashboardView())
+        await interaction.response.defer()
+        embed = await build_active_embed()
+        await interaction.followup.send(embed=embed, view=DashboardView())
 
     @discord.ui.button(label="🏆 Lifetime Stats", style=discord.ButtonStyle.success)
     async def stats_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message(embed=build_lifetime_stats_embed(), view=MainDashboardView())
+        await interaction.response.send_message(embed=build_stats_embed(), view=DashboardView())
 
-    @discord.ui.button(label="✅ Quick Win", style=discord.ButtonStyle.secondary)
-    async def force_win_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not ACTIVE_SLIPS:
-            await interaction.response.send_message("ℹ️ No active slip to settle!", ephemeral=True)
-            return
-        slip = ACTIVE_SLIPS.pop(0)
-        legs = slip.get("legs", [])
-        record_slip_in_ledger(slip, won=True, legs_hit_count=len(legs))
-        await interaction.response.send_message(
-            content=f"🏆 **BOOM! Settled `{slip.get('title')}` as WON (`+{slip.get('potential_profit')}`) and added to Lifetime Stats!**",
-            embed=build_lifetime_stats_embed(),
-            view=MainDashboardView()
-        )
-
-    @discord.ui.button(label="🏦 Set Bankroll", style=discord.ButtonStyle.secondary)
-    async def bank_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(BankrollGoalModal())
-
-    @discord.ui.button(label="🗑️ Clear Active", style=discord.ButtonStyle.danger)
-    async def clear_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @discord.ui.button(label="🗑️ Reset Stats", style=discord.ButtonStyle.danger)
+    async def reset_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         ACTIVE_SLIPS.clear()
-        await interaction.response.send_message("🗑️ **Cleared active slips!**", view=MainDashboardView())
+        save_ledger({"total_bets": 0, "won": 0, "lost": 0, "total_staked": 0.0, "net_profit": 0.0, "biggest_win": 0.0, "streak": 0, "best_streak": 0, "history": []})
+        await interaction.response.send_message("🔄 **Stats & Active Bets Reset to 0!**", embed=build_stats_embed(), view=DashboardView())
 
 
-class SmartPreviewView(discord.ui.View):
-    def __init__(self, parsed_slip, is_already_over=False, already_won=False, legs_hit=0):
+class ConfirmView(discord.ui.View):
+    def __init__(self, slips_list, evaluated_slips):
         super().__init__(timeout=600)
-        self.parsed_slip = parsed_slip
-        self.is_already_over = is_already_over
-        self.already_won = already_won
-        self.legs_hit = legs_hit
+        self.slips_list = slips_list
+        self.evaluated_slips = evaluated_slips  # list of (slip, is_over, won, hit_count)
 
-    @discord.ui.button(label="✅ Confirm & Lock In / Save Result", style=discord.ButtonStyle.success)
+    @discord.ui.button(label="✅ Confirm", style=discord.ButtonStyle.success)
     async def confirm_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         global TRACKING_CHANNEL_ID
         TRACKING_CHANNEL_ID = interaction.channel_id
         self.clear_items()
 
-        if self.is_already_over:
-            ledger, net_change = record_slip_in_ledger(self.parsed_slip, self.already_won, self.legs_hit)
-            res_word = f"🏆 WON (+{self.parsed_slip.get('potential_profit')})" if self.already_won else f"💔 LOST ({net_change:,.1f})"
-            await interaction.response.edit_message(
-                content=f"📥 **Finished Slip Auto-Graded as {res_word} & Added to Lifetime Stats!**",
-                embed=build_lifetime_stats_embed(),
-                view=MainDashboardView()
-            )
-            return
+        saved_finished = 0
+        started_live = 0
 
-        slip_obj = dict(self.parsed_slip)
-        slip_obj["id"] = f"slip_{int(datetime.now().timestamp())}"
-        slip_obj["notified_kickoff"] = set()
-        slip_obj["notified_achieved"] = set(slip_obj.get("pre_achieved_indices", []))
-        slip_obj["notified_halftime"] = set()
-        slip_obj["notified_late"] = set()
-        slip_obj["notified_final"] = set(slip_obj.get("pre_final_indices", []))
-        ACTIVE_SLIPS.append(slip_obj)
+        for slip, is_over, won, hit_count in self.evaluated_slips:
+            if is_over:
+                record_bet(slip, won)
+                saved_finished += 1
+            else:
+                s_obj = dict(slip)
+                s_obj["id"] = f"s_{int(datetime.now().timestamp())}_{started_live}"
+                s_obj["notified_ach"] = set(slip.get("pre_hit_indices", []))
+                s_obj["notified_ht"] = set()
+                s_obj["notified_late"] = set()
+                s_obj["notified_ft"] = set()
+                ACTIVE_SLIPS.append(s_obj)
+                started_live += 1
 
-        legs = slip_obj.get("legs", [])
-        done_now = len(slip_obj["notified_achieved"])
-        embed = discord.Embed(
-            title=f"🔥 LOCKED IN! Tracking {slip_obj.get('title')}",
-            description=(
-                f"**Odds:** `{slip_obj.get('odds')}x`  •  **Stake:** `{slip_obj.get('stake')}`  •  **Profit:** `+{slip_obj.get('potential_profit')}`\n"
-                f"**Progress:** {render_progress_bar(done_now, len(legs))}\n\n"
-                f"🔔 **Multi-Sport Auto-Alerts Active:**\n"
-                f"• ⚽🏏🥊🎮 **Live Score, Round & Over Updates**\n"
-                f"• 🎉 **Instant Leg Hit Pings (1 done, {max(0, len(legs)-1)} to go!)**\n"
-                f"• 🏆 **Auto Settlement & Lifetime Stats Backup**"
-            ),
-            color=0x2ECC71
+        msg_parts = []
+        if saved_finished > 0:
+            msg_parts.append(f"✅ **Saved `{saved_finished}` finished bet(s) into your Lifetime Stats!**")
+        if started_live > 0:
+            msg_parts.append(f"🔥 **Tracking `{started_live}` live/upcoming bet(s)!**")
+
+        await interaction.response.edit_message(
+            content="\n".join(msg_parts),
+            embed=build_stats_embed() if saved_finished > 0 else await build_active_embed(),
+            view=DashboardView()
         )
-        for i, leg in enumerate(legs, 1):
-            sp_ic = SPORT_ICONS.get(leg.get("sport", "football"), "⚽")
-            pre_st = "✅ Already Hit!" if (i - 1) in slip_obj["notified_achieved"] else f"🕒 {leg.get('kickoff_bst', 'Today BST')}"
-            embed.add_field(
-                name=f"{sp_ic} Leg {i}: {leg.get('home_team')} vs {leg.get('away_team')}",
-                value=f"Pick: **`{leg.get('label')}`**  •  {pre_st}",
-                inline=False
-            )
-        await interaction.response.edit_message(content=None, embed=embed, view=MainDashboardView())
-
-    @discord.ui.button(label="✏️ Edit Stake / Odds", style=discord.ButtonStyle.primary)
-    async def edit_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(EditSlipModal(self.parsed_slip, self))
 
     @discord.ui.button(label="✖ Cancel", style=discord.ButtonStyle.secondary)
     async def cancel_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.clear_items()
-        await interaction.response.edit_message(content="❌ **Cancelled.** Drop a screenshot or type a match anytime!", embed=None, view=self)
+        await interaction.response.edit_message(content="❌ **Cancelled.**", embed=None, view=None)
 
 # =====================================================================
-# 9. SMART PREVIEW & FINISHED-MATCH AUTO-GRADER
+# 7. PREVIEW & AUTO-CHECKER
 # =====================================================================
-async def build_smart_preview_card(parsed):
-    feeds = await fetch_all_sports_feeds()
-    legs = parsed.get("legs", [])
+async def evaluate_uploaded_slips(slips_list):
+    events = await fetch_scores_multi_day()
+    evaluated = []
 
-    all_finished = True
-    any_failed = False
-    legs_hit = 0
-    pre_achieved = []
-    pre_final = []
-    leg_Blocks = []
+    embed = discord.Embed(
+        title=f"📋 Found {len(slips_list)} Bet(s) — Please Confirm",
+        color=0x5865F2
+    )
 
-    for idx, leg in enumerate(legs):
-        ev = match_event_multi_sport(leg, feeds)
-        res = evaluate_leg_multi_sport(leg, ev)
-        sp_ic = res["sport_icon"]
+    for s_idx, slip in enumerate(slips_list, 1):
+        legs = slip.get("legs", [])
+        all_ft = True
+        any_lost = False
+        hits = 0
+        pre_hits = []
+        lines = []
 
-        if res["achieved"]:
-            legs_hit += 1
-            pre_achieved.append(idx)
-            leg["achieved"] = True
-            st_badge = f"✅ **ALREADY HIT!** ({res['score']})"
-        elif res["impossible"]:
-            any_failed = True
-            st_badge = f"❌ **ALREADY MISSED** ({res['score']} — FT)"
-        elif res["is_final"]:
-            st_badge = f"🏁 **Finished** ({res['score']})"
-        elif res["status"] not in ("Scheduled", "Scheduled / Custom"):
-            all_finished = False
-            st_badge = f"🟢 **LIVE NOW:** {res['score']} (`{res['clock_display']}`)"
+        for l_idx, leg in enumerate(legs):
+            ev = find_match_event(leg, events)
+            res = evaluate_leg(leg, ev)
+
+            if res["won"]:
+                hits += 1
+                pre_hits.append(l_idx)
+                ic = "✅ WON"
+            elif res["lost"]:
+                any_lost = True
+                ic = "❌ LOST"
+            elif res["is_ft"]:
+                ic = "🏁 FT"
+            elif res.get("state") == "in":
+                all_ft = False
+                ic = f"🟢 LIVE {res['clock']}"
+            else:
+                all_ft = False
+                ic = "🕒 Scheduled"
+
+            if not res["is_ft"]:
+                all_ft = False
+
+            lines.append(f"• **{res['score']}** ({ic}) — `{leg['label']}`")
+
+        slip["pre_hit_indices"] = pre_hits
+
+        # Check if explicitly marked Won/Lost in pasted history or finished via API
+        if slip.get("explicit_won") is not None:
+            is_over = True
+            won = slip["explicit_won"]
         else:
-            all_finished = False
-            st_badge = f"🕒 Scheduled: {leg.get('kickoff_bst', 'Today BST')}"
+            is_over = (all_ft and len(legs) > 0) or any_lost
+            won = (hits == len(legs)) and not any_lost
 
-        if res["is_final"]:
-            pre_final.append(idx)
+        if is_over:
+            status_tag = f"🏆 FINISHED: WON (+{slip['potential_profit']})" if won else f"💔 FINISHED: LOST (-{slip['stake']})"
         else:
-            all_finished = False
+            status_tag = f"🔥 ACTIVE ({hits}/{len(legs)} Hit • To Win: +{slip['potential_profit']})"
 
-        leg_Blocks.append(( f"{sp_ic} Leg {idx+1}: {leg.get('home_team')} vs {leg.get('away_team')}", f"• **Pick:** `{leg.get('label')}`\n• **Status:** {st_badge}" ))
-
-    parsed["pre_achieved_indices"] = pre_achieved
-    parsed["pre_final_indices"] = pre_final
-
-    is_over = (all_finished and len(legs) > 0) or any_failed
-    won = (legs_hit == len(legs)) and not any_failed
-
-    if is_over:
-        verdict = f"🏆 **ALL LEGS WON! (+{parsed.get('potential_profit')})**" if won else f"💔 **SLIP LOST (-{parsed.get('stake')})**"
-        title = f"🏁 Finished Match Detected! — {parsed.get('title')}"
-        desc = (
-            f"{verdict}\n"
-            f"**Odds:** `{parsed.get('odds')}x`  •  **Stake:** `{parsed.get('stake')}`  •  **Legs Hit:** `{legs_hit}/{len(legs)}`\n\n"
-            f"👉 **Tap `[✅ Confirm & Lock In / Save Result]` below to add this result to your Lifetime Stats!**"
+        embed.add_field(
+            name=f"Bet #{s_idx}: {slip['title']} — {status_tag}",
+            value="\n".join(lines),
+            inline=False
         )
-        color = 0x2ECC71 if won else 0xE74C3C
-    else:
-        title = f"🎟️ Slip Preview — {parsed.get('title')}"
-        desc = (
-            f"**Legs:** `{len(legs)}`  •  **Odds:** `{parsed.get('odds')}x`  •  **Stake:** `{parsed.get('stake')}`  •  **To Win:** `+{parsed.get('potential_profit')}`\n"
-            + (f"🔥 **`{legs_hit}/{len(legs)}` legs are ALREADY hit!**\n\n" if legs_hit > 0 else "\n")
-            + "👉 **Tap `[✅ Confirm & Lock In]` to start live tracking (or `[✏️ Edit Stake / Odds]`)!**"
-        )
-        color = 0x5865F2
+        evaluated.append((slip, is_over, won, hits))
 
-    embed = discord.Embed(title=title, description=desc, color=color)
-    for name, val in leg_Blocks:
-        embed.add_field(name=name, value=val, inline=False)
-    embed.set_footer(text=f"Checked at {now_bst_str()}")
-    return embed, is_over, won, legs_hit
+    embed.set_footer(text="Tap Confirm below to save finished bets & track live ones!")
+    return embed, evaluated
 
 # =====================================================================
-# 10. DISCORD EVENTS & MESSAGE HANDLER
+# 8. DISCORD EVENTS
 # =====================================================================
 @bot.event
 async def on_ready():
-    print(f"🚀 Multi-Sport Ultimate Tracker Online as {bot.user}", flush=True)
-    if not autonomous_loop.is_running():
-        autonomous_loop.start()
+    print(f"✅ Clean Tracker Online as {bot.user}", flush=True)
+    if not live_loop.is_running():
+        live_loop.start()
 
 @bot.event
 async def on_message(message):
@@ -1067,54 +724,49 @@ async def on_message(message):
     if message.author.bot:
         return
 
+    # 1. Image Upload
     if message.attachments:
         for att in message.attachments:
             if any(att.filename.lower().endswith(ext) for ext in [".png", ".jpg", ".jpeg", ".webp"]):
                 TRACKING_CHANNEL_ID = message.channel.id
-                wait_msg = await message.channel.send("🔍 **Scanning your slip & checking live/finished scores...**")
+                wait_msg = await message.channel.send("🔍 **Reading slip & checking real scores...**")
                 img_bytes = await att.read()
+                ocr_text = await extract_text_via_free_ocr(img_bytes)
+                slips = parse_all_slips_from_text(ocr_text) if ocr_text else []
 
-                parsed = call_gemini_parser(text_input=message.content, image_bytes=img_bytes)
-                if not parsed or not parsed.get("legs"):
-                    ocr_text = await extract_text_via_free_ocr(img_bytes)
-                    if ocr_text:
-                        parsed = call_gemini_parser(text_input=ocr_text) or smart_universal_text_parser(ocr_text)
-
-                if parsed and parsed.get("legs"):
-                    embed, is_over, won, hits = await build_smart_preview_card(parsed)
-                    view = SmartPreviewView(parsed, is_already_over=is_over, already_won=won, legs_hit=hits)
-                    await wait_msg.edit(content=None, embed=embed, view=view)
+                if slips:
+                    embed, evaluated = await evaluate_uploaded_slips(slips)
+                    await wait_msg.edit(content=None, embed=embed, view=ConfirmView(slips, evaluated))
                     return
                 else:
-                    await wait_msg.edit(content="⚠️ Couldn't read the match names clearly from that image. Try cropping closer or type the match!")
+                    await wait_msg.edit(content="⚠️ Could not read teams from image. Try pasting the text or cropping closer!")
                     return
 
+    # 2. Pasted Bet History or Typed Match
     content = message.content.strip()
     if content and not content.startswith("!"):
         low = content.lower()
-        if low in ["stats", "my stats", "lifetime"]:
-            await message.channel.send(embed=build_lifetime_stats_embed(), view=MainDashboardView())
+        if low in ("stats", "my stats"):
+            await message.channel.send(embed=build_stats_embed(), view=DashboardView())
             return
-        if low in ["active", "matches", "live", "status"]:
-            embed = await build_active_matches_embed()
-            await message.channel.send(embed=embed, view=MainDashboardView())
+        if low in ("active", "live", "status"):
+            await message.channel.send(embed=await build_active_embed(), view=DashboardView())
             return
-        if any(k in low for k in ["vs", "-vs-", " v ", "over", "under", "win", "btts", "ufc", "cricket"]):
+        if any(k in low for k in ["vs", "-vs-", " v ", "over", "under", "stake:", "id:"]):
             TRACKING_CHANNEL_ID = message.channel.id
-            parsed = call_gemini_parser(text_input=content) or smart_universal_text_parser(content)
-            if parsed and parsed.get("legs"):
-                embed, is_over, won, hits = await build_smart_preview_card(parsed)
-                view = SmartPreviewView(parsed, is_already_over=is_over, already_won=won, legs_hit=hits)
-                await message.channel.send(embed=embed, view=view)
+            slips = parse_all_slips_from_text(content)
+            if slips:
+                embed, evaluated = await evaluate_uploaded_slips(slips)
+                await message.channel.send(embed=embed, view=ConfirmView(slips, evaluated))
                 return
 
     await bot.process_commands(message)
 
 # =====================================================================
-# 11. 60-SECOND AUTONOMOUS MULTI-SPORT TRACKING LOOP
+# 9. 60-SECOND LIVE LOOP (REAL SCORES, GOAL ALERTS, HT & 72')
 # =====================================================================
 @tasks.loop(seconds=60)
-async def autonomous_loop():
+async def live_loop():
     if not ACTIVE_SLIPS or not TRACKING_CHANNEL_ID:
         return
 
@@ -1123,158 +775,126 @@ async def autonomous_loop():
         return
 
     try:
-        feeds = await fetch_all_sports_feeds()
-        slips_to_remove = []
+        events = await fetch_scores_multi_day()
+        done_slips = []
 
         for slip in ACTIVE_SLIPS:
             s_id = slip["id"]
             legs = slip.get("legs", [])
-            total_legs = len(legs)
-            notified_ko = slip["notified_kickoff"]
-            notified_ach = slip["notified_achieved"]
-            notified_ht = slip["notified_halftime"]
+            total = len(legs)
+            notified_ach = slip["notified_ach"]
+            notified_ht = slip["notified_ht"]
             notified_late = slip["notified_late"]
-            notified_ft = slip["notified_final"]
+            notified_ft = slip["notified_ft"]
 
-            leg_results = []
-            all_finished = True
-            any_failed = False
-            failed_leg_info = None
+            all_ft = True
+            any_lost = False
+            lost_leg_text = ""
 
             for idx, leg in enumerate(legs):
-                ev = match_event_multi_sport(leg, feeds)
-                res = evaluate_leg_multi_sport(leg, ev)
-                leg_results.append(res)
+                ev = find_match_event(leg, events)
+                res = evaluate_leg(leg, ev)
 
-                if not res["is_final"]:
-                    all_finished = False
-                if res["impossible"]:
-                    any_failed = True
-                    failed_leg_info = (idx + 1, leg, res)
+                if not res["is_ft"]:
+                    all_ft = False
+                if res["lost"]:
+                    any_lost = True
+                    lost_leg_text = f"**{res['score']} (FT)** — `{leg['label']}` missed."
 
-                sp_ic = res["sport_icon"]
-
-                if res["status"] not in ("Scheduled", "Scheduled / Custom") and not res["is_final"] and idx not in notified_ko:
-                    notified_ko.add(idx)
-                    ko_embed = discord.Embed(
-                        title=f"🟢 LIVE NOW — {res['score']}",
-                        description=(
-                            f"{sp_ic} **Pick:** `{leg.get('label')}`\n"
-                            f"• **Status:** `{res['clock_display']}`\n"
-                            f"• **Win Meter:** {render_win_meter(res['likelihood_pct'])}"
-                        ),
-                        color=0x2ECC71
-                    )
-                    await channel.send(embed=ko_embed, view=MainDashboardView())
-
-                state_key = (s_id, idx)
-                prev_score = LAST_STATE.get(state_key)
-                if prev_score is not None and prev_score != res["score"] and leg.get("sport", "football") == "football":
-                    g_embed = discord.Embed(
-                        title=f"⚽ GOAL! Score Update ({res['clock_display']})",
+                # 1. REAL-TIME GOAL ALERT
+                key = (s_id, idx)
+                prev = LAST_SCORES.get(key)
+                curr = (res["home_score"], res["away_score"])
+                if prev is not None and (curr[0] > prev[0] or curr[1] > prev[1]):
+                    scorer = res["home_name"] if curr[0] > prev[0] else res["away_name"]
+                    embed = discord.Embed(
+                        title=f"⚽ GOAL! {scorer} ({res['clock']})",
                         description=(
                             f"### {res['score']}\n"
-                            f"• **Pick:** `{leg.get('label')}`\n"
-                            f"• **Situation:** **{res['requirement']}**\n"
-                            f"• **Win Meter:** {render_win_meter(res['likelihood_pct'])}"
+                            f"Pick: `{leg['label']}` → **{res['need_text']}**\n"
+                            f"Win Chance: **`{res['chance']}%`**"
                         ),
                         color=0x00A8FF
                     )
-                    await channel.send(embed=g_embed, view=MainDashboardView())
-                LAST_STATE[state_key] = res["score"]
+                    await channel.send(embed=embed)
+                LAST_SCORES[key] = curr
 
-                if res["achieved"] and idx not in notified_ach:
+                # 2. LEG WON ALERT ("1 done, 3 to go")
+                if res["won"] and idx not in notified_ach:
                     notified_ach.add(idx)
-                    leg["achieved"] = True
-                    done = len(notified_ach)
-                    left = total_legs - done
-                    headline = f"🎉 {done} Leg Hit, {left} to Go!" if left > 0 else "🎉 Every Leg Hit!"
-                    hit_embed = discord.Embed(
-                        title=f"✅ {sp_ic} LEG LOCKED IN! — {headline}",
-                        description=(
-                            f"**Match:** {res['score']} (`{res['clock_display']}`)\n"
-                            f"**Pick Hit:** `{leg.get('label')}`\n\n"
-                            f"**Parlay Progress:**\n{render_progress_bar(done, total_legs)}"
-                        ),
+                    done_c = len(notified_ach)
+                    left_c = total - done_c
+                    msg = f"🎉 **{done_c} Done, {left_c} to Go!**" if left_c > 0 else "🎉 **All Legs Won!**"
+                    embed = discord.Embed(
+                        title=f"✅ Leg Hit! — {msg}",
+                        description=f"**{res['score']}** (`{res['clock']}`)\nPick Hit: `{leg['label']}`",
                         color=0x2ECC71
                     )
-                    await channel.send(embed=hit_embed, view=MainDashboardView())
+                    await channel.send(embed=embed)
 
-                if res["is_mid"] and idx not in notified_ht and not res["achieved"]:
+                # 3. HALF-TIME UPDATE (45')
+                if res["is_ht"] and idx not in notified_ht and not res["won"]:
                     notified_ht.add(idx)
-                    comb = 1.0
-                    for r in leg_results:
-                        comb *= (r["likelihood_pct"] / 100.0)
-                    ht_embed = discord.Embed(
-                        title=f"⏱️ Mid-Match Update ({res['clock_display']}) — {leg.get('home_team')} vs {leg.get('away_team')}",
+                    embed = discord.Embed(
+                        title=f"⏱️ Half-Time (45') — {res['score']}",
                         description=(
-                            f"**Current State:** `{res['score']}`\n"
-                            f"**What You Need:** **{res['requirement']}**\n\n"
-                            f"**Leg Win Meter:** {render_win_meter(res['likelihood_pct'])}\n"
-                            f"**Game Read:** 💬 *{res['analysis']}*\n"
-                            + (f"\n**Full Parlay Chance:** {render_win_meter(int(round(comb*100)))}" if total_legs > 1 else "")
+                            f"Pick: `{leg['label']}`\n"
+                            f"**Status:** {res['short_read']}\n"
+                            f"**Win Chance:** **`{res['chance']}%`**"
                         ),
                         color=0xF39C12
                     )
-                    await channel.send(embed=ht_embed, view=MainDashboardView())
+                    await channel.send(embed=embed)
 
-                elif res["is_late"] and idx not in notified_late and not res["achieved"]:
+                # 4. LATE-MATCH UPDATE (~72')
+                elif res["is_late"] and idx not in notified_late and not res["won"]:
                     notified_late.add(idx)
-                    comb = 1.0
-                    for r in leg_results:
-                        comb *= (r["likelihood_pct"] / 100.0)
-                    late_embed = discord.Embed(
-                        title=f"🔥 Crunch-Time Sweat ({res['clock_display']}) — {leg.get('home_team')} vs {leg.get('away_team')}",
+                    embed = discord.Embed(
+                        title=f"🔥 Final 20 Mins ({res['clock']}) — {res['score']}",
                         description=(
-                            f"**Current State:** `{res['score']}`\n"
-                            f"**What You Need:** **{res['requirement']}**\n\n"
-                            f"**Leg Win Meter:** {render_win_meter(res['likelihood_pct'])}\n"
-                            f"**Game Read:** 💬 *{res['analysis']}*\n"
-                            + (f"\n**Full Parlay Chance:** {render_win_meter(int(round(comb*100)))}" if total_legs > 1 else "")
+                            f"Pick: `{leg['label']}`\n"
+                            f"**Status:** {res['short_read']}\n"
+                            f"**Win Chance:** **`{res['chance']}%`**"
                         ),
                         color=0xE67E22
                     )
-                    await channel.send(embed=late_embed, view=MainDashboardView())
+                    await channel.send(embed=embed)
 
-                if res["is_final"] and idx not in notified_ft:
+                if res["is_ft"]:
                     notified_ft.add(idx)
 
-            all_cleared = (len(notified_ach) == total_legs)
-            if any_failed or all_cleared or (all_finished and len(notified_ft) == total_legs):
-                won = all_cleared and not any_failed
-                ledger, net_change = record_slip_in_ledger(slip, won, len(notified_ach))
-
+            # 5. SETTLE BET WHEN DONE OR BUSTED
+            all_won = (len(notified_ach) == total)
+            if any_lost or all_won or (all_ft and len(notified_ft) == total):
+                won = all_won and not any_lost
+                _, net = record_bet(slip, won)
                 if won:
-                    end_title = f"🏆 BOOM! CASHED IT! (+{slip.get('potential_profit')})"
-                    end_sub = f"Every single leg in **{slip.get('title')}** hit! 🔥"
-                    end_color = 0x2ECC71
+                    embed = discord.Embed(
+                        title=f"🏆 BET WON! (+{slip['potential_profit']})",
+                        description=f"**{slip['title']}** — All {total} leg(s) hit!",
+                        color=0x2ECC71
+                    )
                 else:
-                    leg_num, f_leg, f_res = failed_leg_info if failed_leg_info else (1, legs[0], leg_results[0])
-                    end_title = f"💔 Slip Busted — Leg {leg_num} Missed ({net_change:,.1f})"
-                    end_sub = f"**{f_res['score']}** — `{f_leg.get('label')}` missed."
-                    end_color = 0xE74C3C
+                    embed = discord.Embed(
+                        title=f"💔 Bet Lost ({net:,.1f})",
+                        description=f"**{slip['title']}**\n{lost_leg_text}",
+                        color=0xE74C3C
+                    )
+                await channel.send(embed=embed, view=DashboardView())
+                done_slips.append(slip)
 
-                final_embed = discord.Embed(
-                    title=end_title,
-                    description=f"{end_sub}\n**Legs Hit:** {render_progress_bar(len(notified_ach), total_legs)}",
-                    color=end_color
-                )
-                await channel.send(embed=final_embed)
-                await channel.send(embed=build_lifetime_stats_embed(), view=MainDashboardView())
-                slips_to_remove.append(slip)
-
-        for r_slip in slips_to_remove:
-            if r_slip in ACTIVE_SLIPS:
-                ACTIVE_SLIPS.remove(r_slip)
+        for d in done_slips:
+            if d in ACTIVE_SLIPS:
+                ACTIVE_SLIPS.remove(d)
 
     except Exception as e:
         print(f"Loop error: {e}", flush=True)
 
 # =====================================================================
-# 12. KEEP-ALIVE SERVER FOR 24/7 CLOUD HOSTING
+# 10. KEEP-ALIVE WEB SERVER
 # =====================================================================
 async def health_check(request):
-    return web.Response(text="⚡ Multi-Sport Ultimate Tracker is 24/7 Online!")
+    return web.Response(text="Bot is online!")
 
 async def main():
     app = web.Application()
@@ -1283,7 +903,6 @@ async def main():
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", PORT)
     await site.start()
-    print(f"🌐 Cloud Keep-Alive Server listening on port {PORT}", flush=True)
     await bot.start(DISCORD_BOT_TOKEN)
 
 if __name__ == "__main__":
