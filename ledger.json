@@ -91,6 +91,69 @@
      "score": "Lucas Fernando vs Billy Elekana"
     }
    ]
+  },
+  {
+   "key": "id3153221380",
+   "id": "3153221380",
+   "title": "2-Leg Parlay",
+   "kind": "parlay",
+   "sport": "soccer",
+   "stake": 540.0,
+   "odds": 4.528,
+   "result": "won",
+   "net": 1905.55,
+   "date": "2026-11-08",
+   "legs": [
+    {
+     "label": "Aston Villa Over 1.5",
+     "match": "Manchester United vs Aston Villa",
+     "sport": "soccer",
+     "status": "won",
+     "score": "Manchester United 4–4 Aston Villa"
+    },
+    {
+     "label": "Barcelona to win",
+     "match": "Atletico Madrid vs Barcelona",
+     "sport": "soccer",
+     "status": "won",
+     "score": "Atletico Madrid 1–2 Barcelona"
+    }
+   ]
+  },
+  {
+   "key": "id3153232143",
+   "id": "3153232143",
+   "title": "3-Leg Parlay",
+   "kind": "parlay",
+   "sport": "soccer",
+   "stake": 203.0,
+   "odds": 5.364,
+   "result": "lost",
+   "net": -203.0,
+   "date": "2026-11-08",
+   "legs": [
+    {
+     "label": "Crystal Palace Over 0.5",
+     "match": "Crystal Palace vs Liverpool",
+     "sport": "soccer",
+     "status": "won",
+     "score": "Crystal Palace 1–3 Liverpool"
+    },
+    {
+     "label": "Chelsea 0.0 (handicap)",
+     "match": "Sunderland vs Chelsea",
+     "sport": "soccer",
+     "status": "lost",
+     "score": "Sunderland 1–0 Chelsea"
+    },
+    {
+     "label": "Barcelona Over 2.5",
+     "match": "Atletico Madrid vs Barcelona",
+     "sport": "soccer",
+     "status": "lost",
+     "score": "Atletico Madrid 1–2 Barcelona"
+    }
+   ]
   }
  ]
 }
